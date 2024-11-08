@@ -49,11 +49,13 @@ from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 from omni.isaac.lab.utils.math import subtract_frame_transforms
+from omni.isaac.lab.assets.articulation import ArticulationCfg, Articulation
 
+from scipy.spatial.transform import Rotation as R
 ##
 # Pre-defined configs
 ##
-from omni.isaac.lab_assets import FRANKA_PANDA_HIGH_PD_CFG, UR10_CFG  # isort:skip
+from omni.isaac.lab_assets import FRANKA_PANDA_HIGH_PD_CFG, UR10_CFG, XIAOMI_R_ARM_CFG  # isort:skip
 
 
 @configclass
@@ -85,6 +87,8 @@ class TableTopSceneCfg(InteractiveSceneCfg):
         robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     elif args_cli.robot == "ur10":
         robot = UR10_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    elif args_cli.robot == "xiaomi":
+        robot = XIAOMI_R_ARM_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
     else:
         raise ValueError(f"Robot {args_cli.robot} is not supported. Valid: franka_panda, ur10")
 
@@ -93,7 +97,7 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     """Runs the simulation loop."""
     # Extract scene entities
     # note: we only do this here for readability.
-    robot = scene["robot"]
+    robot: Articulation = scene["robot"]
 
     # Create controller
     diff_ik_cfg = DifferentialIKControllerCfg(command_type="pose", use_relative_mode=False, ik_method="dls")
@@ -106,10 +110,15 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
     goal_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
 
     # Define goals for the arm
+    r1 = R.from_quat([0.5, -0.5, -.5, -0.5]).as_euler("xyz", degrees=True)
+    q1 = R.from_euler("xyz", r1 + [0, 10, 0], degrees=True).as_quat()
+    q2 = R.from_euler("xyz", r1 + [0, 20, 0], degrees=True).as_quat()
+    q3 = R.from_euler("xyz", r1 + [0, 30, 0], degrees=True).as_quat()
     ee_goals = [
-        [0.5, 0.5, 0.7, 0.707, 0, 0.707, 0],
-        [0.5, -0.4, 0.6, 0.707, 0.707, 0.0, 0.0],
-        [0.5, 0, 0.5, 0.0, 1.0, 0.0, 0.0],
+        [0.4, -0.2, 0.3, 0.5, -0.5, -.5, -0.5],
+        [0.4, -0.2, 0.3, q1[0], q1[1], q1[2], q1[3]],
+        [0.4, -0.2, 0.3, q2[0], q2[1], q2[2], q2[3]],
+        [0.4, -0.2, 0.3, q3[0], q3[1], q3[2], q3[3]],
     ]
     ee_goals = torch.tensor(ee_goals, device=sim.device)
     # Track the given command
@@ -123,6 +132,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
         robot_entity_cfg = SceneEntityCfg("robot", joint_names=["panda_joint.*"], body_names=["panda_hand"])
     elif args_cli.robot == "ur10":
         robot_entity_cfg = SceneEntityCfg("robot", joint_names=[".*"], body_names=["ee_link"])
+    elif args_cli.robot == "xiaomi":
+        robot_entity_cfg = SceneEntityCfg("robot", joint_names=["R_ARM.*"], body_names=["R_hand_contact"])
     else:
         raise ValueError(f"Robot {args_cli.robot} is not supported. Valid: franka_panda, ur10")
     # Resolving the scene entities
@@ -147,8 +158,8 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
             # reset joint state
             joint_pos = robot.data.default_joint_pos.clone()
             joint_vel = robot.data.default_joint_vel.clone()
-            robot.write_joint_state_to_sim(joint_pos, joint_vel)
-            robot.reset()
+            # robot.write_joint_state_to_sim(joint_pos, joint_vel)
+            # robot.reset()
             # reset actions
             ik_commands[:] = ee_goals[current_goal_idx]
             joint_pos_des = joint_pos[:, robot_entity_cfg.joint_ids].clone()
@@ -169,7 +180,6 @@ def run_simulator(sim: sim_utils.SimulationContext, scene: InteractiveScene):
             )
             # compute the joint commands
             joint_pos_des = diff_ik_controller.compute(ee_pos_b, ee_quat_b, jacobian, joint_pos)
-
         # apply actions
         robot.set_joint_position_target(joint_pos_des, joint_ids=robot_entity_cfg.joint_ids)
         scene.write_data_to_sim()
