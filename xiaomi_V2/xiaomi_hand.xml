@@ -1,0 +1,198 @@
+<mujoco model="xiaomi_hand">
+    <compiler angle="radian" coordinate="local" meshdir="stl"></compiler>
+    <option timestep="0.002" iterations="20" apirate="200">
+        <flag warmstart="enable"></flag>
+    </option>
+
+    <visual>
+        <map fogstart="3" fogend="5" force="0.1"></map>
+        <quality shadowsize="4096"></quality>
+    </visual>
+
+    <default>
+        <default class="asset_class">
+            <geom friction="1 0.005 0.001" condim="3" margin="0.0005" contype="1" conaffinity="1"></geom>
+            <joint limited="true" damping="0.1" armature="0.001" margin="0.01" frictionloss="0.001"></joint>
+            <site size="0.005" rgba="0.4 0.9 0.4 1"></site>
+            <general ctrllimited="true" forcelimited="true"></general>
+        </default>
+        <default class="collision">
+            <geom contype="1" conaffinity="0" group="4" type="mesh"></geom>
+            <joint limited="true" damping="0.5" armature="0.001" margin="0.01" frictionloss="0.005"></joint>
+        </default>
+    </default>
+    <!-- <contact>
+        <pair geom1="index_fingertip" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="index_distal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="index_proximal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="middle_fingertip" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="middle_proximal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="middle_distal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="ring_fingertip" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="ring_distal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="ring_proximal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="pinky_fingertip" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="pinky_distal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="pinky_proximal" geom2="thumb_fingertip" condim="3"></pair>
+        <pair geom1="palm" geom2="thumb_fingertip" condim="3"></pair>
+
+        <pair geom1="index_fingertip" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="index_fingertip" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="index_fingertip" geom2="thumb_proximal" condim="3"></pair>
+        <pair geom1="index_fingertip" geom2="palm" condim="3"></pair>
+        <pair geom1="index_distal" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="index_distal" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="index_distal" geom2="thumb_proximal" condim="3"></pair>
+        <pair geom1="index_proximal" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="index_proximal" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="index_proximal" geom2="thumb_proximal" condim="3"></pair>
+        
+        <pair geom1="middle_fingertip" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="middle_fingertip" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="middle_fingertip" geom2="thumb_proximal" condim="3"></pair>
+        <pair geom1="middle_fingertip" geom2="palm" condim="3"></pair>
+        <pair geom1="middle_distal" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="middle_distal" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="middle_distal" geom2="thumb_proximal" condim="3"></pair>
+        <pair geom1="middle_proximal" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="middle_proximal" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="middle_proximal" geom2="thumb_proximal" condim="3"></pair>
+
+        <pair geom1="ring_fingertip" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="ring_fingertip" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="ring_fingertip" geom2="thumb_proximal" condim="3"></pair>
+        <pair geom1="ring_fingertip" geom2="palm" condim="3"></pair>
+        <pair geom1="ring_distal" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="ring_distal" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="ring_distal" geom2="thumb_proximal" condim="3"></pair>
+        <pair geom1="ring_proximal" geom2="thumb_distal" condim="3"></pair>
+        <pair geom1="ring_proximal" geom2="thumb_middle" condim="3"></pair>
+        <pair geom1="ring_proximal" geom2="thumb_proximal" condim="3"></pair>
+
+        <pair geom1="pinky_fingertip" geom2="palm" condim="3"></pair>
+    </contact> -->
+
+    <actuator>
+        <position name="pinky_proximal" class="asset_class" forcerange="-0.9 0.9" joint="R_pinky_finger_proximal_joint" ctrlrange="0.16455 1.76687" kp="80"></position>
+        <position name="ring_proximal" class="asset_class" joint="R_ring_finger_proximal_joint" forcerange="-0.9 0.9" ctrlrange="0.16455 1.76687" kp="80"></position>
+        <position name="middle_proximal" class="asset_class" joint="R_middle_finger_proximal_joint" forcerange="-0.9 0.9" ctrlrange="0.16455 1.76687" kp="80"></position>
+        <position name="index_proximal" class="asset_class" joint="R_index_finger_proximal_joint" forcerange="-0.9 0.9" ctrlrange="0.16455 1.76687" kp="80"></position>
+        <position name="thumb_opp" class="asset_class" joint="R_thumb_opp_joint" forcerange="-0.9 0.9" ctrlrange="0.1915 1.5261" kp="80"></position>
+        <position name="thumb_proximal" class="asset_class" joint="R_thumb_proximal_joint" forcerange="-0.9 0.9" ctrlrange="0.31537 0.957365" kp="150"></position>
+    </actuator>
+
+    <asset>
+        <mesh name="finger_proximal" scale="1 1 1" file="finger_proximal.stl"></mesh>
+        <mesh name="finger_distal_no_tip" scale="1 1 1" file="finger_distal_no_tip.stl"></mesh>
+        <mesh name="fingertip" scale="1 1 1" file="fingertip.stl"></mesh>
+        <mesh name="palm" scale="1 1 1" file="palm.stl"></mesh>
+        <mesh name="thumb_opp" scale="1 1 1" file="thumb_opp.stl"></mesh>
+        <mesh name="thumb_pro" scale="1 1 1" file="thumb_pro.stl"></mesh>
+        <mesh name="thumb_mid" scale="1 1 1" file="thumb_mid.stl"></mesh>
+        <mesh name="thumb_dis_no_tip" scale="1 1 1" file="thumb_dis_no_tip.stl"></mesh>
+        <mesh name="thumbtip" scale="1 1 1" file="thumbtip.stl"></mesh>
+    </asset>
+
+    <worldbody>
+            
+            <body name="R_palm" euler="0 0 0" pos="0 0 0">
+                <inertial pos="-0.0022914558 -0.0042366243 0.049529453" quat="0.706718 -0.0149178 -0.0149342 0.70718" mass="0.67554613" diaginertia="0.00040641427 0.00054013059 0.0002867356"/>
+                <geom class="collision" name="palm" mesh="palm"></geom>
+                <body name="R_pinky_finger_proximal" euler="0.0 0.1657820160349222 0.0" pos="-0.00515 -0.0324 0.12215251">
+                    <inertial pos="-0.0024319 3.32848e-07 0.0100281" quat="0.706718 -0.0149178 -0.0149342 0.70718" mass="0.00000935221" diaginertia="1.17326e-06 1.15439e-06 5.59038e-07"/>
+                    <joint class="collision" name="R_pinky_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="pinky_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_pinky_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <inertial pos="-0.00219206 2.81739e-06 0.0232403" quat="0.998808 -4.92595e-05 0.0488007 -0.000586221" mass="0.0000120337" diaginertia="2.91006e-06 2.87262e-06 3.38002e-07"/>
+                        <joint class="collision" name="R_pinky_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="pinky_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_pinky_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="pinky_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_ring_finger_proximal" euler="0.0 0.1657820160349222 0.0" pos="-0.00515 -0.0087 0.12415251">
+                    <joint class="collision" name="R_ring_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="ring_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_ring_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_ring_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="ring_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_ring_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="ring_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_middle_finger_proximal" euler="0.0 0.1657820160349222 0.0" pos="-0.00515 0.015 0.12645251">
+                    <joint class="collision" name="R_middle_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="middle_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_middle_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_middle_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="middle_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_middle_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="middle_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_index_finger_proximal" euler="-0.07078042510785677 0.16537448166153335 -0.011670841976077777" pos="-0.00515 0.03864 0.124416">
+                    <joint class="collision" name="R_index_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="index_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_index_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_index_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="index_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_index_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="index_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_thumb_opp" euler="0 0 0" pos="0.01835 0.034 0.0395">
+                    <joint class="collision" name="R_thumb_opp_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="0.1915 1.5261" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="thumb_opp" mesh="thumb_opp"></geom>
+                    <body name="R_thumb_proximal" euler = "0 0 0" pos="0.011 0 0">
+                        <joint class="collision" name="R_thumb_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.31537 0.957365"></joint>
+                        <geom class="collision" name="thumb_proximal" mesh="thumb_pro"></geom>
+                        <body name="R_thumb_middle" euler = "0 0 0" pos="0 0 0.05572">
+                            <joint class="collision" name="R_thumb_middle_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1 0.2"></joint>
+                            <geom class="collision" name="thumb_middle" mesh="thumb_mid"></geom>
+                            <body name="R_thumb_distal" euler = "0 0 0" pos="0 0 0.02305">
+                                <joint class="collision" name="R_thumb_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1 0.2"></joint>
+                                <geom class="collision" name="thumb_distal" mesh="thumb_dis_no_tip"></geom>
+                                <body name="R_thumbtip" pos="0 0 0" euler="0 0 0">
+                                    <geom class="collision" name="thumb_fingertip" mesh="thumbtip"></geom>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        
+        <light directional="true" ambient="0.2 0.2 0.2" diffuse="0.8 0.8 0.8" specular="0.3 0.3 0.3" castshadow="false" pos="0 1 4" dir="0 0 -1" name="light0"></light>
+    </worldbody>
+
+    <tendon>
+        <fixed name="pinky_tendon" limited="true" range="0.3017 0.3018">
+            <joint joint="R_pinky_finger_proximal_joint" coef="0.9845"></joint>
+            <joint joint="R_pinky_finger_distal_joint" coef="-1"></joint>
+        </fixed>
+        <fixed name="ring_tendon" limited="true" range="0.3017 0.3018">
+            <joint joint="R_ring_finger_proximal_joint" coef="0.9845"></joint>
+            <joint joint="R_ring_finger_distal_joint" coef="-1"></joint>
+        </fixed>
+        <fixed name="middle_tendon" limited="true" range="0.3017 0.3018">
+            <joint joint="R_middle_finger_proximal_joint" coef="0.9845"></joint>
+            <joint joint="R_middle_finger_distal_joint" coef="-1"></joint>
+        </fixed>
+        <fixed name="index_tendon" limited="true" range="0.3017 0.3018">
+            <joint joint="R_index_finger_proximal_joint" coef="0.9845"></joint>
+            <joint joint="R_index_finger_distal_joint" coef="-1"></joint>
+        </fixed>
+        <fixed name="thumb_distal_tendon" limited="true" range="-0.1068 -0.1067">
+            <joint joint="R_thumb_middle_joint" coef="0.8027"></joint>
+            <joint joint="R_thumb_distal_joint" coef="-1"></joint>
+        </fixed>
+        <fixed name="thumb_proximal_tendon" limited="true" range="1.192 1.193">
+            <joint joint="R_thumb_proximal_joint" coef="1.257"></joint>
+            <joint joint="R_thumb_middle_joint" coef="-1"></joint>
+        </fixed>
+    </tendon>
+    
+</mujoco>

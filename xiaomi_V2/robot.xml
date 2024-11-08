@@ -1,0 +1,73 @@
+<!-- See LICENSE.md for legal notices. LICENSE.md must be kept together with this file. -->
+<mujoco>
+    <body name="m92_manipulation" pos="0 0 0" euler="0 0 0">
+        <body name="base" pos="0 0 0" euler="0 0 0">
+            <body childclass="asset_class" name="R_palm" euler="0 0 0" pos="0 0 0">
+                <geom class="collision" name="palm" mesh="palm"></geom>
+                <body name="R_pinky_finger_proximal" euler="0.0 0.1657820160349222 0.0" pos="-0.00515 -0.0324 0.12215251">
+                    <joint class="collision" name="R_pinky_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="pinky_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_pinky_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_pinky_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="pinky_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_pinky_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="pinky_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_ring_finger_proximal" euler="0.0 0.1657820160349222 0.0" pos="-0.00515 -0.0087 0.12415251">
+                    <joint class="collision" name="R_ring_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="ring_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_ring_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_ring_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="ring_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_ring_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="ring_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_middle_finger_proximal" euler="0.0 0.1657820160349222 0.0" pos="-0.00515 0.015 0.12645251">
+                    <joint class="collision" name="R_middle_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="middle_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_middle_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_middle_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="middle_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_middle_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="middle_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_index_finger_proximal" euler="-0.07078042510785677 0.16537448166153335 -0.011670841976077777" pos="-0.00515 0.03864 0.124416">
+                    <joint class="collision" name="R_index_finger_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.16455 1.76687" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="index_proximal" mesh="finger_proximal"></geom>
+                    <body name="R_index_finger_distal" pos="0 0 0.0325" euler="0 0 0">
+                        <joint class="collision" name="R_index_finger_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.1397 1.4378"></joint>
+                        <geom class="collision" name="index_distal" mesh="finger_distal_no_tip"></geom>
+                        <body name="R_index_fingertip" pos="0 0 0" euler="0 0 0">
+                            <geom class="collision" name="index_fingertip" mesh="fingertip"></geom>
+                        </body>
+                    </body>
+                </body>
+                <body name="R_thumb_opp" euler="0 0 0" pos="0.01835 0.034 0.0395">
+                    <joint class="collision" name="R_thumb_opp_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="0.1915 1.5261" damping="0.5" armature="0.005"></joint>
+                    <geom class="collision" name="thumb_opp" mesh="thumb_opp"></geom>
+                    <body name="R_thumb_proximal" euler = "0 0 0" pos="0.011 0 0">
+                        <joint class="collision" name="R_thumb_proximal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="0.31537 0.957365"></joint>
+                        <geom class="collision" name="thumb_proximal" mesh="thumb_pro"></geom>
+                        <body name="R_thumb_middle" euler = "0 0 0" pos="0 0 0.05572">
+                            <joint class="collision" name="R_thumb_middle_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1 0.2"></joint>
+                            <geom class="collision" name="thumb_middle" mesh="thumb_mid"></geom>
+                            <body name="R_thumb_distal" euler = "0 0 0" pos="0 0 0.02305">
+                                <joint class="collision" name="R_thumb_distal_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1 0.2"></joint>
+                                <geom class="collision" name="thumb_distal" mesh="thumb_dis_no_tip"></geom>
+                                <body name="R_thumbtip" pos="0 0 0" euler="0 0 0">
+                                    <geom class="collision" name="thumb_fingertip" mesh="thumbtip"></geom>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </body>
+</mujoco>
