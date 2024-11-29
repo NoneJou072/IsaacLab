@@ -45,7 +45,7 @@ class ShadowHandVisionEnvCfg(ShadowHandEnvCfg):
         width=120,
         height=120,
     )
-    feature_extractor = FeatureExtractorCfg()
+    feature_extractor = FeatureExtractorCfg(write_image_to_file=True)
 
     # env
     observation_space = 164 + 27  # state observation + vision CNN embedding

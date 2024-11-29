@@ -42,3 +42,4 @@ from .unitree import *
 from .universal_robots import *
 from .xiaomi_hand import *
 from .xiaomi_r_arm import *
+from .xiaomi_l_arm import *

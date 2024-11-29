@@ -8,9 +8,12 @@ import os
 import torch
 import torch.nn as nn
 import torchvision
+from torchvision.models.resnet import ResNet, BasicBlock
+from torchvision.models import resnet18, ResNet18_Weights
 
 from omni.isaac.lab.sensors import save_images_to_file
 from omni.isaac.lab.utils import configclass
+import torchvision.transforms.v2
 
 
 class FeatureExtractorNetwork(nn.Module):
@@ -18,41 +21,37 @@ class FeatureExtractorNetwork(nn.Module):
 
     def __init__(self):
         super().__init__()
-        num_channel = 7  # RGB, depth, and segmentation images
-        self.cnn = nn.Sequential(
-            nn.Conv2d(num_channel, 16, kernel_size=7, stride=2, padding=0),
-            nn.ReLU(),
-            nn.LayerNorm([16, 109, 109]),
-            nn.Conv2d(16, 32, kernel_size=6, stride=2, padding=0),
-            nn.ReLU(),
-            nn.LayerNorm([32, 52, 52]),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
-            nn.ReLU(),
-            nn.LayerNorm([64, 25, 25]),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=0),
-            nn.ReLU(),
-            nn.LayerNorm([128, 12, 12]),
-            nn.AvgPool2d(12),
-        )
+
+        self.resnet = resnet18(weights=ResNet18_Weights.DEFAULT)
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+        num_ftrs = self.resnet.fc.in_features
+        self.resnet.fc = nn.Linear(in_features=num_ftrs, out_features=32, bias=True)
 
         self.linear = nn.Sequential(
-            nn.Linear(128, 7),
+            nn.Linear(64, 256),
+            nn.ReLU(),
+            nn.Linear(256, 3),
         )
-
-        self.data_transforms = torchvision.transforms.Compose([
-            torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        self.data_transforms = torchvision.transforms.v2.Compose([
+            torchvision.transforms.v2.Resize((224, 224)),
+            torchvision.transforms.v2.ToTensor(),
+            torchvision.transforms.v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
-    def forward(self, x):
+    def forward(self, x1, x2):
+        f1 = self.get_features(x1)
+        f2 = self.get_features(x2)
+        x = torch.cat((f1, f2), dim=-1)
         out = self.linear(x)
-        return out
+        return out, x
     
     def get_features(self, x):
         x = x.permute(0, 3, 1, 2)
-        x[:, 0:3, :, :] = self.data_transforms(x[:, 0:3, :, :])
-        x[:, 4:7, :, :] = self.data_transforms(x[:, 4:7, :, :])
-        cnn_x = self.cnn(x)
-        return cnn_x.view(-1, 128)
+        x = self.data_transforms(x)
+
+        features = self.resnet(x)
+        return features.view(-1, 32)
 
 
 @configclass
@@ -92,7 +91,7 @@ class FeatureExtractor:
         self.feature_extractor.to(self.device)
 
         self.step_count = 0
-        self.log_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "logs")
+        self.log_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "logs/feature_extractor")
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
 
@@ -110,69 +109,67 @@ class FeatureExtractor:
         else:
             self.feature_extractor.eval()
 
+        self.save_step = 0
+
     def _preprocess_images(
-        self, rgb_img: torch.Tensor, depth_img: torch.Tensor, segmentation_img: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        self, rgb_img: torch.Tensor, segmentation_img: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Preprocesses the input images.
 
         Args:
             rgb_img (torch.Tensor): RGB image tensor. Shape: (N, H, W, 3).
-            depth_img (torch.Tensor): Depth image tensor. Shape: (N, H, W, 1).
             segmentation_img (torch.Tensor): Segmentation image tensor. Shape: (N, H, W, 3)
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Preprocessed RGB, depth, and segmentation
         """
         rgb_img = rgb_img / 255.0
-        # process depth image
-        depth_img[depth_img == float("inf")] = 0
-        depth_img /= 5.0
-        depth_img /= torch.max(depth_img)
         # process segmentation image
         segmentation_img = segmentation_img / 255.0
         mean_tensor = torch.mean(segmentation_img, dim=(1, 2), keepdim=True)
         segmentation_img -= mean_tensor
-        return rgb_img, depth_img, segmentation_img
 
-    def _save_images(self, rgb_img: torch.Tensor, depth_img: torch.Tensor, segmentation_img: torch.Tensor):
+        return rgb_img, segmentation_img
+
+    def _save_images(self, rgb_img: torch.Tensor, segmentation_img: torch.Tensor):
         """Writes image buffers to file.
 
         Args:
             rgb_img (torch.Tensor): RGB image tensor. Shape: (N, H, W, 3).
-            depth_img (torch.Tensor): Depth image tensor. Shape: (N, H, W, 1).
-            segmentation_img (torch.Tensor): Segmentation image tensor. Shape: (N, H, W, 3).
         """
-        save_images_to_file(rgb_img, "shadow_hand_rgb.png")
-        save_images_to_file(depth_img, "shadow_hand_depth.png")
-        save_images_to_file(segmentation_img, "shadow_hand_segmentation.png")
+        save_images_to_file(rgb_img, "mi_robot_rgb.png")
+        save_images_to_file(segmentation_img, "mi_robot_seg.png")
 
     def step(
-        self, rgb_img: torch.Tensor, depth_img: torch.Tensor, segmentation_img: torch.Tensor, gt_pose: torch.Tensor
+        self, rgb_img: torch.Tensor, segmentation_img: torch.Tensor, gt_pose: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Extracts the features using the images and trains the model if the train flag is set to True.
 
         Args:
             rgb_img (torch.Tensor): RGB image tensor. Shape: (N, H, W, 3).
-            depth_img (torch.Tensor): Depth image tensor. Shape: (N, H, W, 1).
-            segmentation_img (torch.Tensor): Segmentation image tensor. Shape: (N, H, W, 3).
             gt_pose (torch.Tensor): Ground truth pose tensor (position and corners). Shape: (N, 27).
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: Pose loss and predicted pose.
         """
 
-        rgb_img, depth_img, segmentation_img = self._preprocess_images(rgb_img, depth_img, segmentation_img)
-
+        rgb_img, segmentation_img = self._preprocess_images(rgb_img, segmentation_img)
         if self.cfg.write_image_to_file:
-            self._save_images(rgb_img, depth_img, segmentation_img)
+            self.save_step += 1
+            if self.save_step % 100 == 0:
+                self._save_images(rgb_img, segmentation_img)
+                # transform_resize = torchvision.transforms.v2.Resize((224, 224))
+                # resized_img = transform_resize(rgb_img.clone().permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+                # self._save_images(resized_img)
+
         if self.cfg.train:
             with torch.enable_grad():
                 with torch.inference_mode(False):
-                    img_input = torch.cat((rgb_img, depth_img, segmentation_img), dim=-1)
+                    rgb_img_input = rgb_img.clone()
+                    seg_img_input = segmentation_img.clone()
                     self.optimizer.zero_grad()
 
-                    features = self.feature_extractor.get_features(img_input)
-                    predicted_pose = self.feature_extractor(features)
+                    predicted_pose, features = self.feature_extractor(rgb_img_input, seg_img_input)
                     pose_loss = self.l2_loss(predicted_pose, gt_pose.clone()) * 100
 
                     pose_loss.backward()
@@ -180,15 +177,14 @@ class FeatureExtractor:
 
                     self.step_count += 1
 
-                    if self.step_count % 50000 == 0:
+                    if self.step_count % 10000 == 0:
                         torch.save(
                             self.feature_extractor.state_dict(),
                             os.path.join(self.log_dir, f"cnn_{self.step_count}_{pose_loss.detach().cpu().numpy()}.pth"),
                         )
-
                     return pose_loss, predicted_pose, features
         else:
-            img_input = torch.cat((rgb_img, depth_img, segmentation_img), dim=-1)
-            features = self.feature_extractor.get_features(img_input)
-            predicted_pose = self.feature_extractor(features)
-            return None, predicted_pose, features
+            rgb_img_input = rgb_img.clone()
+            seg_img_input = segmentation_img.clone()
+            predicted_pose, features = self.feature_extractor(rgb_img_input, seg_img_input)
+            return torch.zeros(1), predicted_pose, features

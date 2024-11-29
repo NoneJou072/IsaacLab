@@ -425,8 +425,6 @@ class MiHandOverRGBCameraEnv(DirectMARLEnv):
         # train CNN to regress on keypoint positions
         pose_loss, predicts, embeddings = self.feature_extractor.step(
             self._tiled_camera.data.output["rgb"],
-            self._tiled_camera.data.output["depth"],
-            self._tiled_camera.data.output["semantic_segmentation"][..., :3],
             torch.cat((self.object_pos, self.object_rot), dim=1),
         )
         self.embeddings = embeddings.clone().detach()

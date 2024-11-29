@@ -13,10 +13,13 @@ from . import agents
 from .mi_hand_over_env import MiHandOverEnv
 from .mi_hand_over_camera_env import MiHandOverRGBCameraEnv
 from .mi_hand_over_camera_env2 import MiHandOverRGBCameraEnv as MiHandOverRGBCameraEnv2
+from .mi_arm_hand_over_camera_env import MiArmHandOverRGBCameraEnv
+
 from .mi_hand_over_env_cfg import MiHandOverEnvCfg
 from .mi_hand_over_camera_env_cfg import MiHandOverRGBCameraEnvCfg
 from .mi_hand_over_camera_env2_cfg import MiHandOverRGBCameraEnvCfg as MiHandOverRGBCameraEnv2Cfg
 from .mi_hand_over_camera_env2_cfg import MiHandOverRGBCameraEnvPlayCfg as MiHandOverRGBCameraEnv2PlayCfg
+from .mi_arm_hand_over_camera_env_cfg import MiArmHandOverRGBCameraEnvCfg, MiArmHandOverRGBCameraEnvPlayCfg
 
 ##
 # Register Gym environments.
@@ -63,6 +66,26 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": MiHandOverRGBCameraEnv2PlayCfg,
+        "skrl_mappo_cfg_entry_point": f"{agents.__name__}:skrl_camera_mappo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Isaac-Mi-Arm-Hand-Over-RGB-Camera-Direct-v0",
+    entry_point="omni.isaac.lab_tasks.direct.mi_hand_over:MiArmHandOverRGBCameraEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": MiArmHandOverRGBCameraEnvCfg,
+        "skrl_mappo_cfg_entry_point": f"{agents.__name__}:skrl_camera_mappo_cfg.yaml",
+    },
+)
+
+gym.register(
+    id="Isaac-Mi-Arm-Hand-Over-RGB-Camera-Direct-Play-v0",
+    entry_point="omni.isaac.lab_tasks.direct.mi_hand_over:MiArmHandOverRGBCameraEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": MiArmHandOverRGBCameraEnvPlayCfg,
         "skrl_mappo_cfg_entry_point": f"{agents.__name__}:skrl_camera_mappo_cfg.yaml",
     },
 )

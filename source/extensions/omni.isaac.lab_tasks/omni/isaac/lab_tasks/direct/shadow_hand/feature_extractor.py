@@ -127,8 +127,8 @@ class FeatureExtractor:
         depth_img /= torch.max(depth_img)
         # process segmentation image
         segmentation_img = segmentation_img / 255.0
-        mean_tensor = torch.mean(segmentation_img, dim=(1, 2), keepdim=True)
-        segmentation_img -= mean_tensor
+        # mean_tensor = torch.mean(segmentation_img, dim=(1, 2), keepdim=True)
+        # segmentation_img -= mean_tensor
         return rgb_img, depth_img, segmentation_img
 
     def _save_images(self, rgb_img: torch.Tensor, depth_img: torch.Tensor, segmentation_img: torch.Tensor):
