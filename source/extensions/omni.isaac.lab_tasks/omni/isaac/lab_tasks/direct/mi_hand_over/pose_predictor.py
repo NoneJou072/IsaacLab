@@ -19,7 +19,7 @@ class PosePredictorNetwork(nn.Module):
         super().__init__()
 
         self.linear = nn.Sequential(
-            nn.Linear(9 + 64, 256),
+            nn.Linear(9 + 32, 256),
             nn.ELU(),
             nn.Linear(256, 256),
             nn.ELU(),

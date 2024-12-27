@@ -1,3 +1,9 @@
+# Copyright (c) 2022-2024, The Isaac Lab Project Developers.
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+
 from __future__ import annotations
 
 import numpy as np
@@ -19,13 +25,18 @@ from omni.isaac.lab.assets import Articulation, RigidObject
 from omni.isaac.lab.envs import DirectMARLEnv
 from omni.isaac.lab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg, save_images_to_file
+from omni.isaac.lab.controllers import DifferentialIKController, DifferentialIKControllerCfg
 from omni.isaac.lab.markers import VisualizationMarkers
 from omni.isaac.lab.markers.config import FRAME_MARKER_CFG
-from omni.isaac.lab.utils.math import quat_conjugate, quat_from_angle_axis, quat_mul, sample_uniform, saturate, subtract_frame_transforms
+from omni.isaac.lab.utils.math import quat_conjugate, quat_from_angle_axis, quat_mul, sample_uniform, saturate
+from omni.isaac.lab.utils.math import subtract_frame_transforms
+from omni.isaac.lab.utils.math import apply_delta_pose
 from omni.isaac.lab.utils.math import *
 
 from .mi_arm_hand_over_camera_env_cfg import MiArmHandOverRGBCameraEnvCfg
 from .feature_extractor import FeatureExtractor, FeatureExtractorCfg
+from .pose_predictor import PosePredictor, PosePredictorCfg
+import time
 
 
 class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
@@ -34,23 +45,26 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
     def __init__(self, cfg: MiArmHandOverRGBCameraEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
-        self.num_right_robot_dofs = self.right_hand.num_joints
-        self.num_left_robot_dofs = self.left_hand.num_joints
+        self.num_right_hand_dofs = self.right_hand.num_joints
+        self.num_left_hand_dofs = self.left_hand.num_joints
 
         # buffers for position targets
         self.right_robot_prev_targets = torch.zeros(
-            (self.num_envs, self.num_right_robot_dofs), dtype=torch.float, device=self.device
+            (self.num_envs, self.num_right_hand_dofs), dtype=torch.float, device=self.device
         )
         self.right_robot_curr_targets = torch.zeros(
-            (self.num_envs, self.num_right_robot_dofs), dtype=torch.float, device=self.device
+            (self.num_envs, self.num_right_hand_dofs), dtype=torch.float, device=self.device
         )
         self.left_robot_prev_targets = torch.zeros(
-            (self.num_envs, self.num_left_robot_dofs), dtype=torch.float, device=self.device
+            (self.num_envs, self.num_left_hand_dofs), dtype=torch.float, device=self.device
         )
         self.left_robot_curr_targets = torch.zeros(
-            (self.num_envs, self.num_left_robot_dofs), dtype=torch.float, device=self.device
+            (self.num_envs, self.num_left_hand_dofs), dtype=torch.float, device=self.device
         )
+        self.next_right_ee_pose_b = torch.zeros((self.num_envs, 7), dtype=torch.float, device=self.device)
+        self.next_left_ee_pose_b = torch.zeros((self.num_envs, 7), dtype=torch.float, device=self.device)
 
+        self.last_embeddings = torch.zeros((self.num_envs, 32), dtype=torch.float, device=self.device)
         self.success_rate = 0.0
         self.success_counts = 0
         self.success_counts = 0
@@ -58,7 +72,6 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         
         print(f"[INFO]{self.right_hand.joint_names}")
         print(f"[INFO]{self.left_hand.joint_names}")
-
         # list of hand actuated joints
         self.right_hand_actuated_dof_indices = list()
         for joint_name in cfg.right_hand_actuated_joint_names:
@@ -81,6 +94,19 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             self.left_arm_actuated_dof_indices.append(self.left_hand.joint_names.index(joint_name))
         self.left_arm_actuated_dof_indices.sort()
 
+        # finger bodies
+        self.right_finger_bodies = list()
+        for body_name in self.cfg.fingertip_body_names:
+            self.right_finger_bodies.append(self.right_hand.body_names.index(body_name))
+        self.right_finger_bodies.sort()
+        self.num_fingertips = len(self.right_finger_bodies)
+
+        self.left_finger_bodies = list()
+        for body_name in self.cfg.fingertip_body_names:
+            self.left_finger_bodies.append(self.left_hand.body_names.index(body_name))
+        self.left_finger_bodies.sort()
+        self.num_fingertips = len(self.left_finger_bodies)
+
         # joint limits
         right_joint_pos_limits = self.right_hand.root_physx_view.get_dof_limits().to(self.device)
         self.right_robot_dof_lower_limits = right_joint_pos_limits[..., 0]
@@ -96,33 +122,49 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         self.z_unit_tensor = torch.tensor([0, 0, 1], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
         # ik controller setup
+        self.right_diff_ik_controller = DifferentialIKController(self.cfg.diff_ik_controller, num_envs=self.num_envs, device=self.device)
         self.right_ee_id = self.right_hand.body_names.index(self.cfg.right_ee_body_name)
+
+        self.left_diff_ik_controller = DifferentialIKController(self.cfg.diff_ik_controller, num_envs=self.num_envs, device=self.device)
         self.left_ee_id = self.left_hand.body_names.index(self.cfg.left_ee_body_name)
 
+        if self.right_hand.is_fixed_base:
+            self.right_ee_jacobi_idx = self.right_ee_id - 1
+        else:
+            self.right_ee_jacobi_idx = self.right_ee_id
+
+        if self.left_hand.is_fixed_base:
+            self.left_ee_jacobi_idx = self.left_ee_id - 1
+        else:
+            self.left_ee_jacobi_idx = self.left_ee_id
+
         self.dt = self.cfg.sim.dt * self.cfg.decimation
+
+        self.left_robot_dof_speed_scales = torch.ones_like(self.left_robot_dof_lower_limits)
+        self.right_robot_dof_speed_scales = torch.ones_like(self.right_robot_dof_lower_limits)
 
         # default goal positions
         self.goal_rot = torch.zeros((self.num_envs, 4), dtype=torch.float, device=self.device)
         self.goal_rot[:, 0] = 1.0
-        self.default_goal_pos = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device)
         self.goal_pos = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device)
-        self.default_goal_pos[:, :] = torch.tensor([0.49, 0.22, 0.04], device=self.device)
-
-        # Markers
+        self.goal_pos[:, :] = torch.tensor([0.49, 0.22, 0.13], device=self.device)
         # initialize goal marker
         # self.goal_markers = VisualizationMarkers(self.cfg.goal_object_cfg)
         # if not self.cfg.is_training:
         # self.next_goal_markers = VisualizationMarkers(self.cfg.next_object_cfg)
         # self.next_goal_markers2 = VisualizationMarkers(self.cfg.next_object_cfg2)
+
+        # Markers
         frame_marker_cfg = FRAME_MARKER_CFG.copy()
         frame_marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
         # self.right_ee_frame_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/right_ee_current"))
         # self.left_ee_frame_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/left_ee_current"))
         # self.goal_frame_marker = VisualizationMarkers(frame_marker_cfg.replace(prim_path="/Visuals/ee_goal"))
 
-        self.feature_extractor = FeatureExtractor(self.cfg.feature_extractor, self.device, self.num_envs)
+        self.feature_extractor = FeatureExtractor(self.cfg.feature_extractor, self.device)
+        # self.pose_predictor = PosePredictor(self.cfg.pose_predictor, self.device)
 
-        self.features_stack = []
+        self.last_time = time.time()
 
     def _setup_scene(self):
         # add hand, in-hand object, and goal object
@@ -155,11 +197,75 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         self.scene.sensors["tiled_camera"] = self._tiled_camera
 
     def _pre_physics_step(self, actions: dict[str, torch.Tensor]) -> None:
-        # low-pass filter actions
-        lamb = 0.8
-        self.actions = {key: lamb * actions[key] + (1 - lamb) * self.actions[key] for key in actions.keys()}
+        self.actions = actions
 
     def _apply_action(self) -> None:
+        # # right arm target
+        # right_delta_pose = torch.zeros((self.num_envs, 6), dtype=torch.float, device=self.device)
+        # right_delta_pose[:, 3:6] = self.actions["right_hand"][:, 0:3] * 0.02
+        # _, self.goal_right_ee_quat_b = apply_delta_pose(self.right_ee_pos_b, self.right_ee_quat_b, right_delta_pose)
+
+        # # left arm target
+        # left_delta_pose = torch.zeros((self.num_envs, 6), dtype=torch.float, device=self.device)
+        # left_delta_pose[:, 3:6] = self.actions["left_hand"][:, 0:3] * 0.02
+        # _, self.goal_left_ee_quat_b = apply_delta_pose(self.left_ee_pos_b, self.left_ee_quat_b, left_delta_pose)
+
+        # # compute right ik
+        # self.next_right_ee_pose_b = torch.cat((self.next_right_ee_pose_b[:, :3], self.goal_right_ee_quat_b), dim=-1)
+        # self.right_diff_ik_controller.set_command(self.next_right_ee_pose_b, self.right_ee_pos_b, self.right_ee_quat_b)
+        # self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices] = self.right_diff_ik_controller.compute(
+        #     self.right_ee_pos_b, self.right_ee_quat_b, self.right_jacobian, self.right_arm_joint_pos)
+        
+        # self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices] = saturate(
+        #     self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices],
+        #     self.right_robot_dof_lower_limits[:, self.right_arm_actuated_dof_indices],
+        #     self.right_robot_dof_upper_limits[:, self.right_arm_actuated_dof_indices],
+        # )
+
+        # # compute left ik
+        # self.next_left_ee_pose_b = torch.cat((self.next_left_ee_pose_b[:, :3], self.goal_left_ee_quat_b), dim=-1)
+        # self.left_diff_ik_controller.set_command(self.next_left_ee_pose_b, self.left_ee_pos_b, self.left_ee_quat_b)
+        # self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices] = self.left_diff_ik_controller.compute(
+        #     self.left_ee_pos_b, self.left_ee_quat_b, self.left_jacobian, self.left_arm_joint_pos)
+        
+        # self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices] = saturate(
+        #     self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices],
+        #     self.left_robot_dof_lower_limits[:, self.left_arm_actuated_dof_indices],
+        #     self.left_robot_dof_upper_limits[:, self.left_arm_actuated_dof_indices],
+        # )
+
+        # # right arm target
+        # self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]] = scale(
+        #     self.actions["right_hand"][:, 0:3],
+        #     self.right_robot_dof_lower_limits[:, self.right_arm_actuated_dof_indices[-3:]],
+        #     self.right_robot_dof_upper_limits[:, self.right_arm_actuated_dof_indices[-3:]],
+        # )
+        # self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]] = (
+        #     self.cfg.act_moving_average_arm * self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]]
+        #     + (1.0 - self.cfg.act_moving_average_arm) * self.right_robot_prev_targets[:, self.right_arm_actuated_dof_indices[-3:]]
+        # )
+        # self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]] = saturate(
+        #     self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]],
+        #     self.right_robot_dof_lower_limits[:, self.right_arm_actuated_dof_indices[-3:]],
+        #     self.right_robot_dof_upper_limits[:, self.right_arm_actuated_dof_indices[-3:]],
+        # )
+
+        # # left arm target
+        # self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices[-3:]] = scale(
+        #     self.actions["left_hand"][:, 0:3],
+        #     self.left_robot_dof_lower_limits[:, self.left_arm_actuated_dof_indices[-3:]],
+        #     self.left_robot_dof_upper_limits[:, self.left_arm_actuated_dof_indices[-3:]],
+        # )
+        # self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices[-3:]] = (
+        #     self.cfg.act_moving_average_arm * self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices[-3:]]
+        #     + (1.0 - self.cfg.act_moving_average_arm) * self.left_robot_prev_targets[:, self.left_arm_actuated_dof_indices[-3:]]
+        # )
+        # self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices[-3:]] = saturate(
+        #     self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices[-3:]],
+        #     self.left_robot_dof_lower_limits[:, self.left_arm_actuated_dof_indices[-3:]],
+        #     self.left_robot_dof_upper_limits[:, self.left_arm_actuated_dof_indices[-3:]],
+        # )
+
         # right arm target
         self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]] = \
             self.right_robot_curr_targets[:, self.right_arm_actuated_dof_indices[-3:]] + \
@@ -175,7 +281,7 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         # left arm target
         self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices] = \
             self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices] + \
-                self.dt * self.actions["left_hand"][:, :7].clamp(-1.0, 1.0) * torch.tensor([1.0, 0.0, 1.0, 1.0, 2.0, 4.0, 4.0], device=self.device)
+                self.dt * self.actions["left_hand"][:, :7].clamp(-1.0, 1.0) * torch.tensor([1.0, 0.0, 0.5, 1.0, 2.0, 4.0, 4.0], device=self.device)
 
         self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices] = saturate(
             self.left_robot_curr_targets[:, self.left_arm_actuated_dof_indices],
@@ -234,16 +340,10 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             "right_hand": torch.cat(
                 (
                     # ---- right hand ----
-                    # DOF positions (13)
-                    unscale(self.right_robot_dof_pos[:, self.right_arm_actuated_dof_indices], 
-                            self.right_robot_dof_lower_limits[:, self.right_arm_actuated_dof_indices], 
-                            self.right_robot_dof_upper_limits[:, self.right_arm_actuated_dof_indices]),
-                    unscale(self.right_robot_dof_pos[:, self.right_hand_actuated_dof_indices], 
-                            self.right_robot_dof_lower_limits[:, self.right_hand_actuated_dof_indices], 
-                            self.right_robot_dof_upper_limits[:, self.right_hand_actuated_dof_indices]),
+                    # DOF positions (19)
+                    unscale(self.right_hand_dof_pos, self.right_robot_dof_lower_limits, self.right_robot_dof_upper_limits),
                     # ---- tiled camera data ----
                     self.embeddings,
-                    # torch.cat(self.features_stack, dim=1),
                     self.goal_pos,
                 ),
                 dim=-1,
@@ -251,27 +351,15 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             "left_hand": torch.cat(
                 (
                     # ---- left hand ----
-                    # DOF positions (13)
-                    unscale(self.left_robot_dof_pos[:, self.left_arm_actuated_dof_indices], 
-                            self.left_robot_dof_lower_limits[:, self.left_arm_actuated_dof_indices], 
-                            self.left_robot_dof_upper_limits[:, self.left_arm_actuated_dof_indices]),
-                    unscale(self.left_robot_dof_pos[:, self.left_hand_actuated_dof_indices], 
-                            self.left_robot_dof_lower_limits[:, self.left_hand_actuated_dof_indices], 
-                            self.left_robot_dof_upper_limits[:, self.left_hand_actuated_dof_indices]),
+                    # DOF positions (19)
+                    unscale(self.left_hand_dof_pos, self.left_robot_dof_lower_limits, self.left_robot_dof_upper_limits),
                     # ---- tiled camera data ----
-                    # self.embeddings,  # (32)
-                    torch.cat(self.features_stack, dim=1),
-                    # self.goal_pos,  # (3)
+                    self.embeddings,  # (32)
+                    self.goal_pos,  # (3)
                 ),
                 dim=-1,
             ),
         }
-        # find nan values
-        for key in observations.keys():
-            if torch.isnan(observations[key]).any():
-                print(f"Found nan in {key} observations")
-                # print position of nan values
-                print(torch.where(torch.isnan(observations[key])))
 
         return observations
 
@@ -280,37 +368,47 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             (
                 # ---- right hand ----
                 # DOF positions (12)
-                unscale(self.right_robot_dof_pos, self.right_robot_dof_lower_limits, self.right_robot_dof_upper_limits),
+                unscale(self.right_hand_dof_pos, self.right_robot_dof_lower_limits, self.right_robot_dof_upper_limits),
                 # DOF velocities (12)
-                self.cfg.vel_obs_scale * self.right_robot_dof_vel,
+                self.cfg.vel_obs_scale * self.right_hand_dof_vel,
+                # fingertip positions (5 * 3)
+                self.right_fingertip_pos.view(self.num_envs, self.num_fingertips * 3),
                 self.right_ee_pos,
                 self.right_ee_quat,
+                # applied actions (20)
+                self.actions["right_hand"],
                 # ---- left hand ----
                 # DOF positions (12)
-                unscale(self.left_robot_dof_pos, self.left_robot_dof_lower_limits, self.left_robot_dof_upper_limits),
+                unscale(self.left_hand_dof_pos, self.left_robot_dof_lower_limits, self.left_robot_dof_upper_limits),
                 # DOF velocities (12)
-                self.cfg.vel_obs_scale * self.left_robot_dof_vel,
+                self.cfg.vel_obs_scale * self.left_hand_dof_vel,
+                # fingertip positions (5 * 3)
+                self.left_fingertip_pos.view(self.num_envs, self.num_fingertips * 3),
                 self.left_ee_pos,
                 self.left_ee_quat,
+                # applied actions (20)
+                self.actions["left_hand"],
                 # ---- object ----
                 # positions (3)
                 self.object_pos,
+                # rotations (4)
+                self.object_rot,
                 # linear velocities (3)
                 self.object_linvel,
+                # angular velocities (3)
+                self.cfg.vel_obs_scale * self.object_angvel,
                 # ---- goal ----
                 # positions (3)
                 self.goal_pos,
                 # rotations (4)
                 self.goal_rot,
+                # goal-object rotation diff (4)
+                # quat_mul(self.object_rot, quat_conjugate(self.left_ee_quat)),
 
                 self.embeddings,
-                # torch.cat(self.features_stack, dim=1),
             ),
             dim=-1,
         )
-        # find nan values
-        if torch.isnan(states).any():
-            print("Found nan in states")
         return states
 
     def _get_rewards(self) -> dict[str, torch.Tensor]:
@@ -322,16 +420,16 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
 
         rew_dist = 2 * torch.exp(-self.cfg.dist_reward_scale * goal_dist)
         rew_dist = torch.where(rhand_object_dist < 0.05, torch.zeros_like(rew_dist), rew_dist)
-        # rew_lhand_dist = 0.5 * torch.exp(-self.cfg.dist_reward_scale * lhand_goal_dist)
+        rew_lhand_dist = 0.5 * torch.exp(-self.cfg.dist_reward_scale * lhand_goal_dist)
         # give reward when the object is close to the goal and the hand is close to the object
-        # rew_lhand_dist = torch.where(goal_dist < 0.05, rew_lhand_dist, torch.zeros_like(rew_lhand_dist))
+        rew_lhand_dist = torch.where(goal_dist < 0.05, rew_lhand_dist, torch.zeros_like(rew_lhand_dist))
 
-        # action_scope_hand = self.action_scope_right_hand + self.action_scope_left_hand
-        # action_scope_arm = self.action_scope_right_arm + self.action_scope_left_arm
-        action_rew = 0.5 * torch.exp(-0.5 * self.action_scope_right_arm) + 0.5 * torch.exp(-0.5 * self.action_scope_left_arm)
+        action_scope_hand = self.action_scope_right_hand + self.action_scope_left_hand
+        action_scope_arm = self.action_scope_right_arm + self.action_scope_left_arm
+        action_rew = torch.exp(-0.5 * self.action_scope_right_arm)
         action_rew = torch.where(lhand_object_dist < 0.05, action_rew, torch.zeros_like(action_rew))
-        # action_penalty = - 0.05 * self.action_scope_right_arm - 0.05 * action_scope_hand
-        # action_penalty = torch.where(lhand_object_dist < 0.05, action_penalty, torch.zeros_like(action_penalty))
+        action_penalty = - 0.05 * self.action_scope_right_arm - 0.05 * action_scope_hand
+        action_penalty = torch.where(lhand_object_dist < 0.05, action_penalty, torch.zeros_like(action_penalty))
         
         if self.cfg.is_training:
             # log reward components
@@ -341,7 +439,7 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             self.extras["log"] = {
                 "dist_goal": goal_dist.mean(),
                 "dist_reward": rew_dist.mean(),
-                # "action_penalty_arm": self.action_scope_right_arm.mean(),
+                "action_penalty_arm": self.action_scope_right_arm.mean(),
                 "action_rew": action_rew.mean(),
                 # "action_penalty_hand": action_scope_hand.mean(),
                 "feature_extractor_loss": self.feature_extractor_loss.mean(),
@@ -349,8 +447,8 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             }
 
         return {
-            "right_hand": rew_dist + action_rew, 
-            "left_hand": rew_dist + action_rew
+            "right_hand": rew_dist + action_rew + rew_lhand_dist, 
+            "left_hand": rew_dist + action_rew + rew_lhand_dist
         }
 
     def _get_dones(self) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
@@ -389,38 +487,44 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         delta_max = self.right_robot_dof_upper_limits[env_ids] - self.right_hand.data.default_joint_pos[env_ids]
         delta_min = self.right_robot_dof_lower_limits[env_ids] - self.right_hand.data.default_joint_pos[env_ids]
 
-        dof_pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_right_robot_dofs), device=self.device)
+        dof_pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_right_hand_dofs), device=self.device)
         rand_delta = delta_min + (delta_max - delta_min) * 0.5 * dof_pos_noise
         dof_pos = self.right_hand.data.default_joint_pos[env_ids]  # + self.cfg.reset_dof_pos_noise * rand_delta
         # dof_pos[:, self.right_arm_actuated_dof_indices[-3:]] = dof_pos[:, self.right_arm_actuated_dof_indices[-3:]] + self.cfg.reset_dof_pos_noise * rand_delta[:, self.right_arm_actuated_dof_indices[-3:]]
 
-        dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_right_robot_dofs), device=self.device)
+        dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_right_hand_dofs), device=self.device)
         dof_vel = self.right_hand.data.default_joint_vel[env_ids] # + self.cfg.reset_dof_vel_noise * dof_vel_noise
         # dof_vel[:, self.right_arm_actuated_dof_indices[-3:]] = dof_vel[:, self.right_arm_actuated_dof_indices[-3:]] + self.cfg.reset_dof_vel_noise * dof_vel_noise[:, self.right_arm_actuated_dof_indices[-3:]]
 
         self.right_robot_prev_targets[env_ids] = dof_pos
         self.right_robot_curr_targets[env_ids] = dof_pos
 
+        self.right_diff_ik_controller.reset(env_ids)
+        self.next_right_ee_pose_b[env_ids] = torch.tensor(self.cfg.init_right_ee_pose, device=self.device).clone()
+
         self.right_hand.set_joint_position_target(dof_pos, env_ids=env_ids)
         self.right_hand.write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)
+
+        self.last_embeddings[env_ids] = torch.zeros((32), dtype=torch.float, device=self.device)
 
         # reset left hand
         delta_max = self.left_robot_dof_upper_limits[env_ids] - self.left_hand.data.default_joint_pos[env_ids]
         delta_min = self.left_robot_dof_lower_limits[env_ids] - self.left_hand.data.default_joint_pos[env_ids]
 
-        dof_pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_left_robot_dofs), device=self.device)
+        dof_pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_left_hand_dofs), device=self.device)
         rand_delta = delta_min + (delta_max - delta_min) * 0.5 * dof_pos_noise
         dof_pos = self.left_hand.data.default_joint_pos[env_ids]  # + self.cfg.reset_dof_pos_noise * rand_delta
-        if self.cfg.is_training:
-            dof_pos[:, self.left_arm_actuated_dof_indices[-3:]] = dof_pos[:, self.left_arm_actuated_dof_indices[-3:]] + self.cfg.reset_dof_pos_noise * rand_delta[:, self.left_arm_actuated_dof_indices[-3:]]
+        dof_pos[:, self.left_arm_actuated_dof_indices[-3:]] = dof_pos[:, self.left_arm_actuated_dof_indices[-3:]] + self.cfg.reset_dof_pos_noise * rand_delta[:, self.left_arm_actuated_dof_indices[-3:]]
 
-        dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_left_robot_dofs), device=self.device)
+        dof_vel_noise = sample_uniform(-1.0, 1.0, (len(env_ids), self.num_left_hand_dofs), device=self.device)
         dof_vel = self.left_hand.data.default_joint_vel[env_ids]  # + self.cfg.reset_dof_vel_noise * dof_vel_noise
-        if self.cfg.is_training:
-            dof_vel[:, self.left_arm_actuated_dof_indices[-3:]] = dof_vel[:, self.left_arm_actuated_dof_indices[-3:]] + self.cfg.reset_dof_vel_noise * dof_vel_noise[:, self.left_arm_actuated_dof_indices[-3:]]
+        dof_vel[:, self.left_arm_actuated_dof_indices[-3:]] = dof_vel[:, self.left_arm_actuated_dof_indices[-3:]] + self.cfg.reset_dof_vel_noise * dof_vel_noise[:, self.left_arm_actuated_dof_indices[-3:]]
 
         self.left_robot_prev_targets[env_ids] = dof_pos
         self.left_robot_curr_targets[env_ids] = dof_pos
+
+        self.left_diff_ik_controller.reset(env_ids)
+        self.next_left_ee_pose_b[env_ids] = torch.tensor(self.cfg.init_left_ee_pose, device=self.device).clone()
 
         self.left_hand.set_joint_position_target(dof_pos, env_ids=env_ids)
         self.left_hand.write_joint_state_to_sim(dof_pos, dof_vel, env_ids=env_ids)
@@ -430,10 +534,6 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         self.right_ee_pos = self.right_ee_pos_w - self.scene.env_origins
         self.right_ee_quat = self.right_hand.data.body_state_w[:, self.right_ee_id, 3:7]
 
-        self.left_ee_pos_w = self.left_hand.data.body_state_w[:, self.left_ee_id, 0:3]
-        self.left_ee_pos = self.left_ee_pos_w - self.scene.env_origins
-        self.left_ee_quat = self.left_hand.data.body_state_w[:, self.left_ee_id, 3:7]
-
         object_default_state = self.object.data.default_root_state.clone()[env_ids]
         pos_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 3), device=self.device)
 
@@ -442,7 +542,7 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         )
         object_default_state[:, 2] += 0.01 * torch.ones(len(env_ids), device=self.device)
         object_default_state[:, 0] += -0.01 * torch.ones(len(env_ids), device=self.device)
-        # rot_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 2), device=self.device)  # noise for X and Y rotation
+        rot_noise = sample_uniform(-1.0, 1.0, (len(env_ids), 2), device=self.device)  # noise for X and Y rotation
         # object_default_state[:, 3:7] = randomize_rotation(
         #     rot_noise[:, 0], rot_noise[:, 1], self.x_unit_tensor[env_ids], self.y_unit_tensor[env_ids]
         # )
@@ -450,11 +550,6 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         object_default_state[:, 7:] = torch.zeros_like(self.object.data.default_root_state[env_ids, 7:])
         object_default_state[:, 9] = -1.0 * torch.ones(len(env_ids), device=self.device)
         self.object.write_root_state_to_sim(object_default_state, env_ids)
-
-        for key in self.cfg.possible_agents:
-            self.actions[key][env_ids] = torch.zeros_like(self.actions[key][env_ids])
-
-        self.features_stack.clear()
 
         self._compute_intermediate_values()
 
@@ -465,9 +560,6 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
             rand_floats[:, 0], rand_floats[:, 1], self.x_unit_tensor[env_ids], self.y_unit_tensor[env_ids]
         )
 
-        self.goal_pos[env_ids] = self.default_goal_pos[env_ids].clone()
-        self.goal_pos[env_ids, 0:2] += torch.randint_like(self.goal_pos[env_ids, 0:2], low=-5, high=5) * 0.01
-
         # update goal pose and markers
         self.goal_rot[env_ids] = new_rot
         goal_pos = self.goal_pos + self.scene.env_origins
@@ -475,13 +567,19 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
 
     def _compute_intermediate_values(self):
         # data for right hand
-        self.right_robot_dof_pos = self.right_hand.data.joint_pos
-        self.right_robot_dof_vel = self.right_hand.data.joint_vel
+        self.right_fingertip_pos = self.right_hand.data.body_pos_w[:, self.right_finger_bodies]
+        self.right_fingertip_rot = self.right_hand.data.body_quat_w[:, self.right_finger_bodies]
+        self.right_fingertip_pos -= self.scene.env_origins.repeat((1, self.num_fingertips)).reshape(
+            self.num_envs, self.num_fingertips, 3
+        )
+
+        self.right_hand_dof_pos = self.right_hand.data.joint_pos
+        self.right_hand_dof_vel = self.right_hand.data.joint_vel
 
         # obtain quantities from simulation
+        self.right_jacobian = self.right_hand.root_physx_view.get_jacobians()[:, self.right_ee_jacobi_idx, :, self.right_arm_actuated_dof_indices]
         self.right_ee_pose_w = self.right_hand.data.body_state_w[:, self.right_ee_id, 0:7]
         self.right_ee_pos_w = self.right_ee_pose_w[:, 0:3]
-        self.right_ee_quat = self.right_ee_pose_w[:, 3:7]
         self.right_root_pose_w = self.right_hand.data.root_state_w[:, 0:7]
         self.right_ee_pos = self.right_ee_pos_w - self.scene.env_origins
         self.right_arm_joint_pos = self.right_hand.data.joint_pos[:, self.right_arm_actuated_dof_indices]
@@ -491,10 +589,18 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         )
 
         # data for left hand
-        self.left_robot_dof_pos = self.left_hand.data.joint_pos
-        self.left_robot_dof_vel = self.left_hand.data.joint_vel
+        self.left_fingertip_pos = self.left_hand.data.body_pos_w[:, self.left_finger_bodies]
+        self.left_fingertip_rot = self.left_hand.data.body_quat_w[:, self.left_finger_bodies]
+        self.left_fingertip_pos -= self.scene.env_origins.repeat((1, self.num_fingertips)).reshape(
+            self.num_envs, self.num_fingertips, 3
+        )
+        self.left_fingertip_velocities = self.left_hand.data.body_vel_w[:, self.left_finger_bodies]
+
+        self.left_hand_dof_pos = self.left_hand.data.joint_pos
+        self.left_hand_dof_vel = self.left_hand.data.joint_vel
 
         # obtain quantities from simulation
+        self.left_jacobian = self.left_hand.root_physx_view.get_jacobians()[:, self.left_ee_jacobi_idx, :, self.left_arm_actuated_dof_indices]
         self.left_ee_pose_w = self.left_hand.data.body_state_w[:, self.left_ee_id, 0:7]
         self.left_ee_pos_w = self.left_ee_pose_w[:, 0:3]
         self.left_ee_quat = self.left_ee_pose_w[:, 3:7]
@@ -522,17 +628,17 @@ class MiArmHandOverRGBCameraEnv(DirectMARLEnv):
         self.predict_object_pos = predict_object_pos.clone().detach()
         self.embeddings = embeddings.clone().detach()
         self.feature_extractor_loss = feature_extractor_loss.clone().detach()
-        self.features_stack.append(embeddings)
-        while len(self.features_stack) < 6:
-            self.features_stack.append(embeddings)
-        if len(self.features_stack) > 6:
-            self.features_stack.pop(0)
-
+        
         predict_object_pos = self.predict_object_pos + self.scene.env_origins
+
+        # self.next_goal_markers.visualize(predict_object_pos, self.object_rot)
+
+        self.last_embeddings = self.embeddings.clone()
 
         # update marker positions
         # self.right_ee_frame_marker.visualize(self.right_ee_pose_w[:, 0:3], self.right_ee_pose_w[:, 3:7])
         # self.left_ee_frame_marker.visualize(self.left_ee_pose_w[:, 0:3], self.left_ee_pose_w[:, 3:7])
+        # self.goal_frame_marker.visualize(self.next_left_ee_pose_b[:, 0:3] + self.scene.env_origins, self.next_left_ee_pose_b[:, 3:7])
 
         self.action_scope_right_hand = torch.norm(
             self.right_robot_curr_targets[:, self.right_hand_actuated_dof_indices]
